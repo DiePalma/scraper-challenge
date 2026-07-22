@@ -1,27 +1,30 @@
 import * as cheerio from "cheerio";
 import { DocumentRecord, SearchResult } from "./types";
 
-
 function cleanText(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
 
 function parseDownloadData(onclick: string): {
-  uuid: string;
-  downloadAction: string;
+  uuid: string | null;
+  downloadAction: string | null;
 } {
-  const uuidMatch = onclick.match(/['"]param_uuid['"]\s*:\s*['"]([^'"]+)['"]/);
-  const actionMatch = onclick.match(
-    /['"]([^'"]+:dt:\d+:j_idt\d+)['"]\s*:\s*['"]\1['"]/,
-  );
-
-  if (!uuidMatch || !actionMatch) {
-    throw new Error("No se pudo interpretar la accion de descarga de una fila");
+  if (!onclick) {
+    return {
+      uuid: null,
+      downloadAction: null,
+    };
   }
 
+  const uuidMatch = onclick.match(/['"]param_uuid['"]\s*:\s*['"]([^'"]+)['"]/);
+
+  const actionMatch = onclick.match(
+    /['"]([^'"]+:dt:\d+:[^'"]+)['"]\s*:\s*['"]\1['"]/,
+  );
+
   return {
-    uuid: uuidMatch[1],
-    downloadAction: actionMatch[1],
+    uuid: uuidMatch?.[1] ?? null,
+    downloadAction: actionMatch?.[1] ?? null,
   };
 }
 interface PaginationInfo {
@@ -47,10 +50,12 @@ function parseTable(
     }
 
     const downloadLink = cells.eq(6).find("a[onclick]");
-    const downloadData = parseDownloadData(
-      downloadLink.attr("onclick") ?? "",
-    );
-
+    const downloadData = parseDownloadData(downloadLink.attr("onclick") ?? "");
+    if (!downloadData.uuid || !downloadData.downloadAction) {
+      console.warn(
+        `Documento sin PDF: ${cleanText(cells.eq(5).text()) || "sin resolución"}`,
+      );
+    }
     documents.push({
       index: Number(cleanText(cells.eq(0).text())),
       expediente: cleanText(cells.eq(1).text()),
@@ -69,17 +74,13 @@ function parseTable(
     );
   }
 
-  const paginatorText = cleanText(
-    $(".ui-paginator-current").first().text(),
-  );
+  const paginatorText = cleanText($(".ui-paginator-current").first().text());
 
   const paginatorMatch =
     paginatorText.match(
       /Pagina\s+(\d+)\s+de\s+(\d+)\s+\((\d+)\s+registros\)/i,
     ) ??
-    paginatorText.match(
-      /Página\s+(\d+)\s+de\s+(\d+)\s+\((\d+)\s+registros\)/i,
-    );
+    paginatorText.match(/Página\s+(\d+)\s+de\s+(\d+)\s+\((\d+)\s+registros\)/i);
 
   if (paginatorMatch) {
     return {
@@ -97,20 +98,17 @@ function parseTable(
     };
   }
 
-  throw new Error(
-    `No se pudo interpretar la paginación: ${paginatorText}`,
-  );
+  throw new Error(`No se pudo interpretar la paginación: ${paginatorText}`);
 }
-
 
 export function parsePartialResponse(
   xmlBody: string,
   fallbackPagination?: PaginationInfo,
 ): SearchResult {
   const xml = cheerio.load(xmlBody, { xmlMode: true });
-const tableHtml =
-  xml('update[id="listarDetalleInfraccionRAAForm:pgLista"]').text() ||
-  xml('update[id="listarDetalleInfraccionRAAForm:dt"]').text();
+  const tableHtml =
+    xml('update[id="listarDetalleInfraccionRAAForm:pgLista"]').text() ||
+    xml('update[id="listarDetalleInfraccionRAAForm:dt"]').text();
 
   const viewStateElement = xml("update")
     .toArray()

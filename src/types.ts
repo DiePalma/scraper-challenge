@@ -5,8 +5,9 @@ export interface DocumentRecord {
   unidadFiscalizable: string;
   sector: string;
   resolucion: string;
-  uuid: string;
-  downloadAction: string;
+
+  uuid: string | null;
+  downloadAction: string | null;
 }
 
 export interface SearchResult {
