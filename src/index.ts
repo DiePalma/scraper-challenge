@@ -183,6 +183,9 @@ async function main(): Promise<void> {
     );
   }
 
+  await saveDocuments(documents);
+  await saveFailedDownloads(failures);
+
   for (
     let pageNumber = 2;
     pageNumber <= pageLimit;
@@ -221,6 +224,9 @@ async function main(): Promise<void> {
     }
 
     currentViewState = page.viewState;
+
+    await saveDocuments(documents);
+    await saveFailedDownloads(failures);
   }
 
   const outputFile = await saveDocuments(documents);
