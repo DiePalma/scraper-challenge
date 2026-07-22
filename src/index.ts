@@ -22,11 +22,19 @@ function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
-function shouldDownloadPdfs(): boolean {
+function shouldDownloadPdfs(fullScrape: boolean): boolean {
+  if (fullScrape) {
+    return true;
+  }
+
   return process.env.DOWNLOAD_PDFS?.trim().toLowerCase() === "true";
 }
 
-function resolvePageLimit(totalPages: number): number {
+function resolvePageLimit(totalPages: number, fullScrape: boolean): number {
+  if (fullScrape) {
+    return totalPages;
+  }
+
   const configuredValue = process.env.MAX_PAGES?.trim().toLowerCase() ?? "3";
 
   if (configuredValue === "all") {
@@ -44,7 +52,11 @@ function resolvePageLimit(totalPages: number): number {
   return Math.min(requestedPages, totalPages);
 }
 
-function resolveCourts(): CourtScope[] {
+function resolveCourts(fullScrape: boolean): CourtScope[] {
+  if (fullScrape) {
+    return ["supreme", "superior"];
+  }
+
   const value = process.env.PJ_COURT?.trim().toLowerCase() ?? "supreme";
 
   if (value === "all") {
@@ -117,13 +129,14 @@ async function scrapeCourt(
   documents: DocumentRecord[],
   failures: FailedDownload[],
   manifest: DownloadManifest,
+  fullScrape: boolean,
 ): Promise<void> {
   console.log(`Iniciando sesión en: ${SITE_URL}`);
   console.log(`Corte: ${court}`);
 
   const session = await initializeSession();
   const firstPage = await searchAll(session, query, court);
-  const pageLimit = resolvePageLimit(firstPage.totalPages);
+  const pageLimit = resolvePageLimit(firstPage.totalPages, fullScrape);
 
   console.log(`Resoluciones disponibles: ${firstPage.totalAvailable}`);
   console.log(`Resultados: ${firstPage.totalRecords}`);
@@ -186,9 +199,10 @@ async function scrapeCourt(
 }
 
 async function main(): Promise<void> {
-  const query = process.env.PJ_QUERY?.trim() ?? "";
-  const courts = resolveCourts();
-  const downloadEnabled = shouldDownloadPdfs();
+  const fullScrape = process.argv.includes("--all");
+  const query = fullScrape ? "" : (process.env.PJ_QUERY?.trim() ?? "");
+  const courts = resolveCourts(fullScrape);
+  const downloadEnabled = shouldDownloadPdfs(fullScrape);
   const documents: DocumentRecord[] = [];
   const failures: FailedDownload[] = [];
   const manifest = await loadDownloadManifest();
@@ -204,6 +218,7 @@ async function main(): Promise<void> {
       documents,
       failures,
       manifest,
+      fullScrape,
     );
   }
 

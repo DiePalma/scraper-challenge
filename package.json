@@ -4,6 +4,7 @@
   "main": "index.js",
   "scripts": {
     "dev": "ts-node src/index.ts",
+    "scrape:all": "ts-node src/index.ts --all",
     "build": "tsc",
     "start": "node dist/index.js",
     "test": "node --test -r ts-node/register tests/retry.test.ts"
