@@ -1,7 +1,7 @@
 import * as cheerio from "cheerio";
 
 import { BASE_URL, extractViewState } from "./session";
-import { DocumentRecord, SearchResult } from "./types";
+import { CourtScope, DocumentRecord, SearchResult } from "./types";
 
 function parseParameters(onclick: string): Record<string, string> {
   const normalized = onclick.replace(/\\"/g, '"');
@@ -32,7 +32,7 @@ function parseParameters(onclick: string): Record<string, string> {
   );
 }
 
-function parseDocuments(html: string): DocumentRecord[] {
+function parseDocuments(html: string, court: CourtScope): DocumentRecord[] {
   const $ = cheerio.load(html);
   const documents: DocumentRecord[] = [];
 
@@ -45,6 +45,7 @@ function parseDocuments(html: string): DocumentRecord[] {
     }
 
     documents.push({
+      court,
       uuid,
       recurso: parameters.recurso ?? "",
       expediente: parameters.nroexp ?? "",
@@ -71,6 +72,7 @@ function parseDocuments(html: string): DocumentRecord[] {
 export function parseResultPage(
   html: string,
   query: string,
+  court: CourtScope,
 ): SearchResult {
   const $ = cheerio.load(html);
   const summary = $("#formBuscador\\:optResultado").text().trim();
@@ -82,12 +84,13 @@ export function parseResultPage(
     throw new Error(`No se pudo interpretar el resumen: ${summary}`);
   }
 
-  const documents = parseDocuments(html);
+  const documents = parseDocuments(html, court);
 
   const totalAvailable = Number(totals[1]);
   const totalRecords = Number(totals[2]);
 
   return {
+    court,
     query,
     documents,
     totalAvailable,
@@ -102,6 +105,7 @@ export function parsePartialPage(
   xmlBody: string,
   metadata: {
     query: string;
+    court: CourtScope;
     currentPage: number;
     totalAvailable: number;
     totalRecords: number;
@@ -128,7 +132,7 @@ export function parsePartialPage(
 
   return {
     ...metadata,
-    documents: parseDocuments(fragments),
+    documents: parseDocuments(fragments, metadata.court),
     viewState,
   };
 }

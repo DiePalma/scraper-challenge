@@ -16,7 +16,7 @@ import {
 } from "./progress";
 import { fetchPage, searchAll } from "./search";
 import { initializeSession, SessionState, SITE_URL } from "./session";
-import { DocumentRecord } from "./types";
+import { CourtScope, DocumentRecord } from "./types";
 
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -42,6 +42,20 @@ function resolvePageLimit(totalPages: number): number {
   }
 
   return Math.min(requestedPages, totalPages);
+}
+
+function resolveCourts(): CourtScope[] {
+  const value = process.env.PJ_COURT?.trim().toLowerCase() ?? "supreme";
+
+  if (value === "all") {
+    return ["supreme", "superior"];
+  }
+
+  if (value === "supreme" || value === "superior") {
+    return [value];
+  }
+
+  throw new Error(`PJ_COURT debe ser supreme, superior o all: ${value}`);
 }
 
 async function saveDocuments(documents: DocumentRecord[]): Promise<string> {
@@ -96,36 +110,34 @@ async function downloadDocuments(
   }
 }
 
-async function main(): Promise<void> {
-  const query = process.env.PJ_QUERY?.trim() ?? "";
-
+async function scrapeCourt(
+  court: CourtScope,
+  query: string,
+  downloadEnabled: boolean,
+  documents: DocumentRecord[],
+  failures: FailedDownload[],
+  manifest: DownloadManifest,
+): Promise<void> {
   console.log(`Iniciando sesión en: ${SITE_URL}`);
+  console.log(`Corte: ${court}`);
+
   const session = await initializeSession();
-  console.log(`Buscando: ${query || "sin filtro"}`);
+  const firstPage = await searchAll(session, query, court);
+  const pageLimit = resolvePageLimit(firstPage.totalPages);
 
-  const result = await searchAll(session, query);
-  const pageLimit = resolvePageLimit(result.totalPages);
-  const downloadEnabled = shouldDownloadPdfs();
-  const failures: FailedDownload[] = [];
-  const manifest = await loadDownloadManifest();
-  const documents: DocumentRecord[] = [...result.documents];
-  let currentResult = result;
-  let currentViewState = result.viewState;
-
-  console.log(`Resoluciones disponibles: ${result.totalAvailable}`);
-  console.log(`Resultados: ${result.totalRecords}`);
-  console.log(`Páginas: ${result.totalPages}`);
+  console.log(`Resoluciones disponibles: ${firstPage.totalAvailable}`);
+  console.log(`Resultados: ${firstPage.totalRecords}`);
+  console.log(`Páginas: ${firstPage.totalPages}`);
   console.log(`Se procesarán ${pageLimit} páginas`);
-  console.log(`Página 1: ${result.documents.length} documentos extraídos`);
-  console.log(
-    `Descarga de PDFs: ${downloadEnabled ? "activada" : "desactivada"}`,
-  );
+  console.log(`Página 1: ${firstPage.documents.length} documentos extraídos`);
+
+  documents.push(...firstPage.documents);
 
   if (downloadEnabled) {
     await downloadDocuments(
       session,
-      result.viewState,
-      result.documents,
+      firstPage.viewState,
+      firstPage.documents,
       1,
       failures,
       manifest,
@@ -135,6 +147,9 @@ async function main(): Promise<void> {
   await saveDocuments(documents);
   await saveFailedDownloads(failures);
 
+  let currentPage = firstPage;
+  let currentViewState = firstPage.viewState;
+
   for (let pageNumber = 2; pageNumber <= pageLimit; pageNumber += 1) {
     await delay(1_000);
     console.log(`Solicitando página ${pageNumber} de ${pageLimit}...`);
@@ -143,11 +158,11 @@ async function main(): Promise<void> {
       session,
       currentViewState,
       pageNumber,
-      currentResult,
+      currentPage,
     );
 
     documents.push(...page.documents);
-    currentResult = page;
+    currentPage = page;
     currentViewState = page.viewState;
 
     console.log(
@@ -167,6 +182,29 @@ async function main(): Promise<void> {
 
     await saveDocuments(documents);
     await saveFailedDownloads(failures);
+  }
+}
+
+async function main(): Promise<void> {
+  const query = process.env.PJ_QUERY?.trim() ?? "";
+  const courts = resolveCourts();
+  const downloadEnabled = shouldDownloadPdfs();
+  const documents: DocumentRecord[] = [];
+  const failures: FailedDownload[] = [];
+  const manifest = await loadDownloadManifest();
+
+  console.log(`Buscando: ${query || "sin filtro"}`);
+  console.log(`Descarga de PDFs: ${downloadEnabled ? "activada" : "desactivada"}`);
+
+  for (const court of courts) {
+    await scrapeCourt(
+      court,
+      query,
+      downloadEnabled,
+      documents,
+      failures,
+      manifest,
+    );
   }
 
   const outputFile = await saveDocuments(documents);

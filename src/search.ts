@@ -7,20 +7,24 @@ import {
   SessionState,
   START_URL,
 } from "./session";
-import { SearchResult } from "./types";
+import { CourtScope, SearchResult } from "./types";
 
 const FORM_ID = "formBuscador";
 
 export async function searchAll(
   session: SessionState,
   query: string,
+  court: CourtScope,
 ): Promise<SearchResult> {
+  const courtValue = court === "supreme" ? "1" : "2";
   const body = new URLSearchParams({
     [FORM_ID]: FORM_ID,
     "javax.faces.ViewState": session.viewState,
     [`${FORM_ID}:tabpanel-value`]: "general",
     [`${FORM_ID}:txtBusqueda`]: query,
-    [`${FORM_ID}:buCorte`]: "1",
+    [`${FORM_ID}:varAutos`]: "on",
+    [`${FORM_ID}:varAutos2`]: "on",
+    [`${FORM_ID}:buCorte`]: courtValue,
     [`${FORM_ID}:buDistrito`]: "0",
     [`${FORM_ID}:buEspecialidad`]: "0",
     [`${FORM_ID}:buSala`]: "0",
@@ -74,7 +78,7 @@ export async function searchAll(
     timeout: 30_000,
   });
 
-  return parseResultPage(resultResponse.data, query);
+  return parseResultPage(resultResponse.data, query, court);
 }
 
 export async function fetchPage(
@@ -116,6 +120,7 @@ export async function fetchPage(
 
   return parsePartialPage(response.data, {
     query: previousResult.query,
+    court: previousResult.court,
     currentPage: pageNumber,
     totalAvailable: previousResult.totalAvailable,
     totalRecords: previousResult.totalRecords,

@@ -1,4 +1,7 @@
+export type CourtScope = "supreme" | "superior";
+
 export interface DocumentRecord {
+  court: CourtScope;
   uuid: string;
   recurso: string;
   expediente: string;
@@ -13,6 +16,7 @@ export interface DocumentRecord {
 }
 
 export interface SearchResult {
+  court: CourtScope;
   query: string;
   documents: DocumentRecord[];
   totalAvailable: number;
