@@ -20,6 +20,8 @@ npm run dev
 
 `MAX_PAGES` acepta un número o `all`. Para descargar PDFs, usa `DOWNLOAD_PDFS="true"`.
 
+`PJ_QUERY` es opcional. Si no se define, se consultan todas las resoluciones de la Corte Suprema.
+
 Los resultados se guardan en `data/`. El scraper conserva el progreso, evita descargas duplicadas y reintenta errores 429.
 
 ## Pruebas

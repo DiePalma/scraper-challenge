@@ -97,11 +97,11 @@ async function downloadDocuments(
 }
 
 async function main(): Promise<void> {
-  const query = process.env.PJ_QUERY?.trim() || "laboral";
+  const query = process.env.PJ_QUERY?.trim() ?? "";
 
   console.log(`Iniciando sesión en: ${SITE_URL}`);
   const session = await initializeSession();
-  console.log(`Buscando: ${query}`);
+  console.log(`Buscando: ${query || "sin filtro"}`);
 
   const result = await searchAll(session, query);
   const pageLimit = resolvePageLimit(result.totalPages);
