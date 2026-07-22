@@ -1,34 +1,26 @@
-# Scraper OEFA
+# Scraper de jurisprudencia
 
-Scraper en TypeScript para extraer resoluciones y descargar PDFs del repositorio público de OEFA, usando Axios y Cheerio.
+Scraper en TypeScript para extraer resoluciones y PDFs del Poder Judicial del Perú.
 
-Sitio: https://publico.oefa.gob.pe/repdig/consulta/consultaTfa.xhtml
+Requiere una conexión con IP de Perú.
 
-## Instalación
+## Uso
 
 ```bash
 npm install
 npm run build
 ```
 
-## Ejecución
-
 ```powershell
+$env:PJ_QUERY="laboral"
 $env:MAX_PAGES="3"
 $env:DOWNLOAD_PDFS="false"
 npm run dev
 ```
 
-`MAX_PAGES` acepta un número o `all`. `DOWNLOAD_PDFS` acepta `true` o `false`.
+`MAX_PAGES` acepta un número o `all`. Para descargar PDFs, usa `DOWNLOAD_PDFS="true"`.
 
-Los resultados se guardan en `data/`:
-
-- `documents.json`
-- `downloaded.json`
-- `failed-downloads.json`
-- `pdfs/`
-
-El scraper guarda el progreso, evita descargas duplicadas y reintenta errores temporales y respuestas 429.
+Los resultados se guardan en `data/`. El scraper conserva el progreso, evita descargas duplicadas y reintenta errores 429.
 
 ## Pruebas
 
