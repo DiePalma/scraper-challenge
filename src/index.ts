@@ -1,20 +1,29 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+
 import { downloadPdf } from "./downloader";
+import {
+  FailedDownload,
+  getErrorMessage,
+  saveFailedDownloads,
+} from "./failures";
 import { fetchPage, searchAll } from "./search";
-import { initializeSession, SITE_URL } from "./session";
+import {
+  initializeSession,
+  SessionState,
+  SITE_URL,
+} from "./session";
 import { DocumentRecord } from "./types";
 
-/** Pausa entre peticiones para reducir la carga sobre el servidor. */
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, milliseconds);
   });
 }
 
-
 function resolvePageLimit(totalPages: number): number {
-  const configuredValue = process.env.MAX_PAGES?.trim().toLowerCase() ?? "3";
+  const configuredValue =
+    process.env.MAX_PAGES?.trim().toLowerCase() ?? "3";
 
   if (configuredValue === "all") {
     return totalPages;
@@ -32,12 +41,20 @@ function resolvePageLimit(totalPages: number): number {
   return Math.min(requestedPages, totalPages);
 }
 
+function shouldDownloadPdfs(): boolean {
+  return (
+    process.env.DOWNLOAD_PDFS?.trim().toLowerCase() === "true"
+  );
+}
 
 async function saveDocuments(
   documents: DocumentRecord[],
 ): Promise<string> {
   const outputDirectory = path.resolve(process.cwd(), "data");
-  const outputFile = path.join(outputDirectory, "documents.json");
+  const outputFile = path.join(
+    outputDirectory,
+    "documents.json",
+  );
 
   await mkdir(outputDirectory, { recursive: true });
 
@@ -50,47 +67,100 @@ async function saveDocuments(
   return outputFile;
 }
 
+async function downloadPageDocuments(
+  session: SessionState,
+  viewState: string,
+  documents: DocumentRecord[],
+  pageNumber: number,
+  failures: FailedDownload[],
+): Promise<void> {
+  for (const [position, document] of documents.entries()) {
+    if (!document.uuid || !document.downloadAction) {
+      console.log(
+        `PDF ${position + 1}/${documents.length} de la página ` +
+          `${pageNumber} omitido: archivo no disponible`,
+      );
+
+      continue;
+    }
+
+    console.log(
+      `Descargando PDF ${position + 1}/${documents.length} ` +
+        `de la página ${pageNumber}: ${document.resolucion}`,
+    );
+
+    try {
+      const outputFile = await downloadPdf(
+        session,
+        viewState,
+        document,
+      );
+
+      console.log(`  Guardado en: ${outputFile}`);
+    } catch (error: unknown) {
+      const errorMessage = getErrorMessage(error);
+
+      console.error(
+        `  No se pudo descargar ${document.resolucion}: ` +
+          errorMessage,
+      );
+
+      failures.push({
+        document,
+        page: pageNumber,
+        error: errorMessage,
+        failedAt: new Date().toISOString(),
+      });
+    }
+
+    await delay(1_000);
+  }
+}
+
 async function main(): Promise<void> {
   console.log(`Iniciando sesión en: ${SITE_URL}`);
 
   const session = await initializeSession();
   console.log("Sesión inicializada correctamente");
 
-
   const firstPage = await searchAll(session);
-  const firstDocument = firstPage.documents[0];
-
-if (!firstDocument) {
-  throw new Error("La primera página no contiene documentos");
-}
-
-console.log(
-  `Descargando PDF de prueba: ${firstDocument.resolucion}`,
-);
-
-const downloadedFile = await downloadPdf(
-  session,
-  firstPage.viewState,
-  firstDocument,
-);
-
-console.log(`PDF guardado en: ${downloadedFile}`);
   const pageLimit = resolvePageLimit(firstPage.totalPages);
+  const downloadEnabled = shouldDownloadPdfs();
+  const failures: FailedDownload[] = [];
+  const documents: DocumentRecord[] = [
+    ...firstPage.documents,
+  ];
 
-  const documents: DocumentRecord[] = [...firstPage.documents];
   let currentViewState = firstPage.viewState;
 
   console.log(
     `El sitio contiene ${firstPage.totalRecords} documentos ` +
       `en ${firstPage.totalPages} páginas`,
   );
-
   console.log(`Se procesarán ${pageLimit} páginas`);
+  console.log(
+    `Descarga de PDFs: ` +
+      `${downloadEnabled ? "activada" : "desactivada"}`,
+  );
   console.log(
     `Página 1: ${firstPage.documents.length} documentos extraídos`,
   );
 
-  for (let pageNumber = 2; pageNumber <= pageLimit; pageNumber += 1) {
+  if (downloadEnabled) {
+    await downloadPageDocuments(
+      session,
+      currentViewState,
+      firstPage.documents,
+      1,
+      failures,
+    );
+  }
+
+  for (
+    let pageNumber = 2;
+    pageNumber <= pageLimit;
+    pageNumber += 1
+  ) {
     await delay(1_000);
 
     console.log(
@@ -105,19 +175,33 @@ console.log(`PDF guardado en: ${downloadedFile}`);
       firstPage.totalRecords,
     );
 
-    currentViewState = page.viewState;
     documents.push(...page.documents);
 
     console.log(
       `Página ${page.currentPage}: ` +
         `${page.documents.length} documentos extraídos`,
     );
+
+    if (downloadEnabled) {
+      await downloadPageDocuments(
+        session,
+        page.viewState,
+        page.documents,
+        pageNumber,
+        failures,
+      );
+    }
+
+    currentViewState = page.viewState;
   }
 
   const outputFile = await saveDocuments(documents);
+  const failuresFile = await saveFailedDownloads(failures);
 
   console.log(`Total extraído: ${documents.length} documentos`);
   console.log(`Resultado guardado en: ${outputFile}`);
+  console.log(`Descargas fallidas: ${failures.length}`);
+  console.log(`Registro de fallos: ${failuresFile}`);
 }
 
 main().catch((error: unknown) => {
