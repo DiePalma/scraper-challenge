@@ -24,13 +24,22 @@ function parseDownloadData(onclick: string): {
     downloadAction: actionMatch[1],
   };
 }
+interface PaginationInfo {
+  currentPage: number;
+  totalPages: number;
+  totalRecords: number;
+}
 
-
-function parseTable(html: string): Omit<SearchResult, "viewState"> {
-  const $ = cheerio.load(html);
+function parseTable(
+  html: string,
+  fallbackPagination?: PaginationInfo,
+): Omit<SearchResult, "viewState"> {
+  const $ = cheerio.load(html, { xmlMode: true });
   const documents: DocumentRecord[] = [];
 
-  $("#listarDetalleInfraccionRAAForm\\:dt_data tr").each((_, row) => {
+  const rows = $("tr[data-ri]");
+
+  rows.each((_, row) => {
     const cells = $(row).find("td");
 
     if (cells.length < 7) {
@@ -38,7 +47,9 @@ function parseTable(html: string): Omit<SearchResult, "viewState"> {
     }
 
     const downloadLink = cells.eq(6).find("a[onclick]");
-    const downloadData = parseDownloadData(downloadLink.attr("onclick") ?? "");
+    const downloadData = parseDownloadData(
+      downloadLink.attr("onclick") ?? "",
+    );
 
     documents.push({
       index: Number(cleanText(cells.eq(0).text())),
@@ -51,31 +62,55 @@ function parseTable(html: string): Omit<SearchResult, "viewState"> {
     });
   });
 
-  const paginatorText = cleanText($(".ui-paginator-current").first().text());
-  const paginatorMatch = paginatorText.match(
-    /Pagina\s+(\d+)\s+de\s+(\d+)\s+\((\d+)\s+registros\)/i,
-  ) ?? paginatorText.match(
-    /Página\s+(\d+)\s+de\s+(\d+)\s+\((\d+)\s+registros\)/i,
-  );
-
-  if (!paginatorMatch) {
-    throw new Error(`No se pudo interpretar la paginacion: ${paginatorText}`);
+  if (documents.length === 0) {
+    throw new Error(
+      `La respuesta contiene la tabla, pero no se encontraron filas. ` +
+        `Longitud del fragmento: ${html.length}`,
+    );
   }
 
-  return {
-    documents,
-    currentPage: Number(paginatorMatch[1]),
-    totalPages: Number(paginatorMatch[2]),
-    totalRecords: Number(paginatorMatch[3]),
-  };
+  const paginatorText = cleanText(
+    $(".ui-paginator-current").first().text(),
+  );
+
+  const paginatorMatch =
+    paginatorText.match(
+      /Pagina\s+(\d+)\s+de\s+(\d+)\s+\((\d+)\s+registros\)/i,
+    ) ??
+    paginatorText.match(
+      /Página\s+(\d+)\s+de\s+(\d+)\s+\((\d+)\s+registros\)/i,
+    );
+
+  if (paginatorMatch) {
+    return {
+      documents,
+      currentPage: Number(paginatorMatch[1]),
+      totalPages: Number(paginatorMatch[2]),
+      totalRecords: Number(paginatorMatch[3]),
+    };
+  }
+
+  if (fallbackPagination) {
+    return {
+      documents,
+      ...fallbackPagination,
+    };
+  }
+
+  throw new Error(
+    `No se pudo interpretar la paginación: ${paginatorText}`,
+  );
 }
 
 
-export function parsePartialResponse(xmlBody: string): SearchResult {
+export function parsePartialResponse(
+  xmlBody: string,
+  fallbackPagination?: PaginationInfo,
+): SearchResult {
   const xml = cheerio.load(xmlBody, { xmlMode: true });
-  const tableHtml = xml(
-    'update[id="listarDetalleInfraccionRAAForm:pgLista"]',
-  ).text();
+const tableHtml =
+  xml('update[id="listarDetalleInfraccionRAAForm:pgLista"]').text() ||
+  xml('update[id="listarDetalleInfraccionRAAForm:dt"]').text();
 
   const viewStateElement = xml("update")
     .toArray()
@@ -93,7 +128,7 @@ export function parsePartialResponse(xmlBody: string): SearchResult {
   }
 
   return {
-    ...parseTable(tableHtml),
+    ...parseTable(tableHtml, fallbackPagination),
     viewState,
   };
 }

@@ -38,4 +38,63 @@ export async function searchAll(session: SessionState): Promise<SearchResult> {
   });
 
   return parsePartialResponse(response.data);
+  
+}
+export async function fetchPage(
+  session: SessionState,
+  viewState: string,
+  pageNumber: number,
+  totalPages: number,
+  totalRecords: number,
+): Promise<SearchResult> {
+  if (!Number.isInteger(pageNumber) || pageNumber < 1) {
+    throw new Error(`Número de página inválido: ${pageNumber}`);
+  }
+
+  const rowsPerPage = 10;
+  const firstRecord = (pageNumber - 1) * rowsPerPage;
+
+  const body = new URLSearchParams({
+    "javax.faces.partial.ajax": "true",
+    "javax.faces.source": `${FORM_ID}:dt`,
+    "javax.faces.partial.execute": `${FORM_ID}:dt`,
+    "javax.faces.partial.render": `${FORM_ID}:dt`,
+
+    [`${FORM_ID}:dt`]: `${FORM_ID}:dt`,
+    [`${FORM_ID}:dt_pagination`]: "true",
+    [`${FORM_ID}:dt_first`]: String(firstRecord),
+    [`${FORM_ID}:dt_rows`]: String(rowsPerPage),
+    [`${FORM_ID}:dt_skipChildren`]: "true",
+    [`${FORM_ID}:dt_encodeFeature`]: "true",
+
+    [FORM_ID]: FORM_ID,
+    [`${FORM_ID}:txtNroexp`]: "",
+    [`${FORM_ID}:j_idt21`]: "",
+    [`${FORM_ID}:j_idt25`]: "",
+    [`${FORM_ID}:idsector`]: "",
+    [`${FORM_ID}:j_idt34`]: "",
+    [`${FORM_ID}:dt_scrollState`]: "0,0",
+
+
+    "javax.faces.ViewState": viewState,
+  });
+
+  const response = await axios.post<string>(SITE_URL, body, {
+    headers: {
+      Accept: "application/xml, text/xml, */*; q=0.01",
+      "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+      Cookie: session.cookie,
+      "Faces-Request": "partial/ajax",
+      Referer: SITE_URL,
+      "X-Requested-With": "XMLHttpRequest",
+      "User-Agent": "scraper-challenge/1.0",
+    },
+    timeout: 30_000,
+  });
+
+  return parsePartialResponse(response.data, {
+  currentPage: pageNumber,
+  totalPages,
+  totalRecords,
+});
 }
