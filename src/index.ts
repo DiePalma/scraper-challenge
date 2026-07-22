@@ -14,7 +14,7 @@ import {
   registerDownloadedDocument,
   saveDownloadManifest,
 } from "./progress";
-import { searchAll } from "./search";
+import { fetchPage, searchAll } from "./search";
 import { initializeSession, SessionState, SITE_URL } from "./session";
 import { DocumentRecord } from "./types";
 
@@ -24,6 +24,24 @@ function delay(milliseconds: number): Promise<void> {
 
 function shouldDownloadPdfs(): boolean {
   return process.env.DOWNLOAD_PDFS?.trim().toLowerCase() === "true";
+}
+
+function resolvePageLimit(totalPages: number): number {
+  const configuredValue = process.env.MAX_PAGES?.trim().toLowerCase() ?? "3";
+
+  if (configuredValue === "all") {
+    return totalPages;
+  }
+
+  const requestedPages = Number(configuredValue);
+
+  if (!Number.isInteger(requestedPages) || requestedPages < 1) {
+    throw new Error(
+      `MAX_PAGES debe ser un entero positivo o "all": ${configuredValue}`,
+    );
+  }
+
+  return Math.min(requestedPages, totalPages);
 }
 
 async function saveDocuments(documents: DocumentRecord[]): Promise<string> {
@@ -40,6 +58,7 @@ async function downloadDocuments(
   session: SessionState,
   viewState: string,
   documents: DocumentRecord[],
+  pageNumber: number,
   failures: FailedDownload[],
   manifest: DownloadManifest,
 ): Promise<void> {
@@ -67,7 +86,7 @@ async function downloadDocuments(
       console.error(`  No se pudo descargar: ${errorMessage}`);
       failures.push({
         document,
-        page: 1,
+        page: pageNumber,
         error: errorMessage,
         failedAt: new Date().toISOString(),
       });
@@ -85,14 +104,19 @@ async function main(): Promise<void> {
   console.log(`Buscando: ${query}`);
 
   const result = await searchAll(session, query);
+  const pageLimit = resolvePageLimit(result.totalPages);
   const downloadEnabled = shouldDownloadPdfs();
   const failures: FailedDownload[] = [];
   const manifest = await loadDownloadManifest();
+  const documents: DocumentRecord[] = [...result.documents];
+  let currentResult = result;
+  let currentViewState = result.viewState;
 
   console.log(`Resoluciones disponibles: ${result.totalAvailable}`);
   console.log(`Resultados: ${result.totalRecords}`);
   console.log(`Páginas: ${result.totalPages}`);
-  console.log(`Documentos extraídos: ${result.documents.length}`);
+  console.log(`Se procesarán ${pageLimit} páginas`);
+  console.log(`Página 1: ${result.documents.length} documentos extraídos`);
   console.log(
     `Descarga de PDFs: ${downloadEnabled ? "activada" : "desactivada"}`,
   );
@@ -102,15 +126,53 @@ async function main(): Promise<void> {
       session,
       result.viewState,
       result.documents,
+      1,
       failures,
       manifest,
     );
   }
 
-  const outputFile = await saveDocuments(result.documents);
+  await saveDocuments(documents);
+  await saveFailedDownloads(failures);
+
+  for (let pageNumber = 2; pageNumber <= pageLimit; pageNumber += 1) {
+    await delay(1_000);
+    console.log(`Solicitando página ${pageNumber} de ${pageLimit}...`);
+
+    const page = await fetchPage(
+      session,
+      currentViewState,
+      pageNumber,
+      currentResult,
+    );
+
+    documents.push(...page.documents);
+    currentResult = page;
+    currentViewState = page.viewState;
+
+    console.log(
+      `Página ${page.currentPage}: ${page.documents.length} documentos extraídos`,
+    );
+
+    if (downloadEnabled) {
+      await downloadDocuments(
+        session,
+        page.viewState,
+        page.documents,
+        pageNumber,
+        failures,
+        manifest,
+      );
+    }
+
+    await saveDocuments(documents);
+    await saveFailedDownloads(failures);
+  }
+
+  const outputFile = await saveDocuments(documents);
   const failuresFile = await saveFailedDownloads(failures);
 
-  console.table(result.documents);
+  console.log(`Total extraído: ${documents.length} documentos`);
   console.log(`Resultado guardado en: ${outputFile}`);
   console.log(`Descargas fallidas: ${failures.length}`);
   console.log(`Registro de fallos: ${failuresFile}`);

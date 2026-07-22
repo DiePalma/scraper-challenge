@@ -32,20 +32,8 @@ function parseParameters(onclick: string): Record<string, string> {
   );
 }
 
-export function parseResultPage(
-  html: string,
-  query: string,
-): SearchResult {
+function parseDocuments(html: string): DocumentRecord[] {
   const $ = cheerio.load(html);
-  const summary = $("#formBuscador\\:optResultado").text().trim();
-  const totals = summary.match(
-    /De un total de\s+(\d+)\s+resoluciones,\s+se obtuvieron\s+(\d+)\s+resultados/i,
-  );
-
-  if (!totals) {
-    throw new Error(`No se pudo interpretar el resumen: ${summary}`);
-  }
-
   const documents: DocumentRecord[] = [];
 
   $('a[title="Ver"][onclick]').each((_, element) => {
@@ -74,8 +62,27 @@ export function parseResultPage(
   });
 
   if (documents.length === 0) {
-    throw new Error("La búsqueda no contiene resoluciones");
+    throw new Error("La página no contiene resoluciones");
   }
+
+  return documents;
+}
+
+export function parseResultPage(
+  html: string,
+  query: string,
+): SearchResult {
+  const $ = cheerio.load(html);
+  const summary = $("#formBuscador\\:optResultado").text().trim();
+  const totals = summary.match(
+    /De un total de\s+(\d+)\s+resoluciones,\s+se obtuvieron\s+(\d+)\s+resultados/i,
+  );
+
+  if (!totals) {
+    throw new Error(`No se pudo interpretar el resumen: ${summary}`);
+  }
+
+  const documents = parseDocuments(html);
 
   const totalAvailable = Number(totals[1]);
   const totalRecords = Number(totals[2]);
@@ -88,5 +95,40 @@ export function parseResultPage(
     totalPages: Math.ceil(totalRecords / 10),
     currentPage: 1,
     viewState: extractViewState(html),
+  };
+}
+
+export function parsePartialPage(
+  xmlBody: string,
+  metadata: {
+    query: string;
+    currentPage: number;
+    totalAvailable: number;
+    totalRecords: number;
+    totalPages: number;
+  },
+): SearchResult {
+  const xml = cheerio.load(xmlBody, { xmlMode: true });
+  const fragments = xml("update")
+    .toArray()
+    .map((element) => xml(element).text())
+    .join("\n");
+  const viewStateElement = xml("update")
+    .toArray()
+    .find((element) =>
+      (xml(element).attr("id") ?? "").includes("javax.faces.ViewState"),
+    );
+  const viewState = viewStateElement
+    ? xml(viewStateElement).text().trim()
+    : "";
+
+  if (!viewState) {
+    throw new Error("La paginación no devolvió un ViewState");
+  }
+
+  return {
+    ...metadata,
+    documents: parseDocuments(fragments),
+    viewState,
   };
 }

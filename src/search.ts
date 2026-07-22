@@ -1,6 +1,6 @@
 import axios from "axios";
 
-import { parseResultPage } from "./parser";
+import { parsePartialPage, parseResultPage } from "./parser";
 import {
   BASE_URL,
   RESULT_URL,
@@ -75,4 +75,50 @@ export async function searchAll(
   });
 
   return parseResultPage(resultResponse.data, query);
+}
+
+export async function fetchPage(
+  session: SessionState,
+  viewState: string,
+  pageNumber: number,
+  previousResult: SearchResult,
+): Promise<SearchResult> {
+  if (!Number.isInteger(pageNumber) || pageNumber < 2) {
+    throw new Error(`Número de página inválido: ${pageNumber}`);
+  }
+
+  const body = new URLSearchParams({
+    "javax.faces.partial.ajax": "true",
+    "javax.faces.source": `${FORM_ID}:data1`,
+    "javax.faces.partial.execute": `${FORM_ID}:data1`,
+    [`${FORM_ID}:data1`]: `${FORM_ID}:data1`,
+    [`${FORM_ID}:data1:page`]: String(pageNumber),
+    [FORM_ID]: FORM_ID,
+    "javax.faces.ViewState": viewState,
+  });
+
+  const response = await axios.post<string>(
+    RESULT_URL,
+    body.toString(),
+    {
+      headers: {
+        Accept: "application/xml, text/xml, */*; q=0.01",
+        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+        Cookie: session.cookie,
+        "Faces-Request": "partial/ajax",
+        Referer: RESULT_URL,
+        "X-Requested-With": "XMLHttpRequest",
+        "User-Agent": "scraper-challenge/1.0",
+      },
+      timeout: 30_000,
+    },
+  );
+
+  return parsePartialPage(response.data, {
+    query: previousResult.query,
+    currentPage: pageNumber,
+    totalAvailable: previousResult.totalAvailable,
+    totalRecords: previousResult.totalRecords,
+    totalPages: previousResult.totalPages,
+  });
 }
