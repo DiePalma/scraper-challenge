@@ -1,19 +1,23 @@
 export interface DocumentRecord {
-  index: number;
+  uuid: string;
+  recurso: string;
   expediente: string;
-  administrado: string;
-  unidadFiscalizable: string;
-  sector: string;
-  resolucion: string;
-
-  uuid: string | null;
-  downloadAction: string | null;
+  palabras: string;
+  pretensiones: string;
+  normaDI: string;
+  tipoResolucion: string;
+  fechaResolucion: string;
+  sala: string;
+  sumilla: string;
+  pdfUrl: string;
 }
 
 export interface SearchResult {
+  query: string;
   documents: DocumentRecord[];
-  currentPage: number;
-  totalPages: number;
+  totalAvailable: number;
   totalRecords: number;
+  totalPages: number;
+  currentPage: number;
   viewState: string;
 }

@@ -1,132 +1,92 @@
 import * as cheerio from "cheerio";
+
+import { BASE_URL, extractViewState } from "./session";
 import { DocumentRecord, SearchResult } from "./types";
 
-function cleanText(value: string): string {
-  return value.replace(/\s+/g, " ").trim();
-}
-
-function parseDownloadData(onclick: string): {
-  uuid: string | null;
-  downloadAction: string | null;
-} {
-  if (!onclick) {
-    return {
-      uuid: null,
-      downloadAction: null,
-    };
-  }
-
-  const uuidMatch = onclick.match(/['"]param_uuid['"]\s*:\s*['"]([^'"]+)['"]/);
-
-  const actionMatch = onclick.match(
-    /['"]([^'"]+:dt:\d+:[^'"]+)['"]\s*:\s*['"]\1['"]/,
+function parseParameters(onclick: string): Record<string, string> {
+  const normalized = onclick.replace(/\\"/g, '"');
+  const match = normalized.match(
+    /"parameters":(\{.*?\})\s*,\s*"incId"/s,
   );
 
-  return {
-    uuid: uuidMatch?.[1] ?? null,
-    downloadAction: actionMatch?.[1] ?? null,
-  };
-}
-interface PaginationInfo {
-  currentPage: number;
-  totalPages: number;
-  totalRecords: number;
+  if (!match) {
+    throw new Error("No se encontraron los datos de una resolución");
+  }
+
+  const parsed: unknown = JSON.parse(match[1]);
+
+  if (typeof parsed !== "object" || parsed === null) {
+    throw new Error("Los datos de la resolución no son válidos");
+  }
+
+  return Object.fromEntries(
+    Object.entries(parsed).map(([key, value]) => [
+      key,
+      String(value)
+        .replace(/\\u([0-9a-fA-F]{4})/g, (_, hex: string) =>
+          String.fromCharCode(Number.parseInt(hex, 16)),
+        )
+        .replace(/\\\//g, "/")
+        .replace(/\\\\/g, "\\"),
+    ]),
+  );
 }
 
-function parseTable(
+export function parseResultPage(
   html: string,
-  fallbackPagination?: PaginationInfo,
-): Omit<SearchResult, "viewState"> {
-  const $ = cheerio.load(html, { xmlMode: true });
+  query: string,
+): SearchResult {
+  const $ = cheerio.load(html);
+  const summary = $("#formBuscador\\:optResultado").text().trim();
+  const totals = summary.match(
+    /De un total de\s+(\d+)\s+resoluciones,\s+se obtuvieron\s+(\d+)\s+resultados/i,
+  );
+
+  if (!totals) {
+    throw new Error(`No se pudo interpretar el resumen: ${summary}`);
+  }
+
   const documents: DocumentRecord[] = [];
 
-  const rows = $("tr[data-ri]");
+  $('a[title="Ver"][onclick]').each((_, element) => {
+    const parameters = parseParameters($(element).attr("onclick") ?? "");
+    const uuid = parameters.uuid;
 
-  rows.each((_, row) => {
-    const cells = $(row).find("td");
-
-    if (cells.length < 7) {
-      return;
+    if (!uuid) {
+      throw new Error("Una resolución no contiene UUID");
     }
 
-    const downloadLink = cells.eq(6).find("a[onclick]");
-    const downloadData = parseDownloadData(downloadLink.attr("onclick") ?? "");
-    if (!downloadData.uuid || !downloadData.downloadAction) {
-      console.warn(
-        `Documento sin PDF: ${cleanText(cells.eq(5).text()) || "sin resolución"}`,
-      );
-    }
     documents.push({
-      index: Number(cleanText(cells.eq(0).text())),
-      expediente: cleanText(cells.eq(1).text()),
-      administrado: cleanText(cells.eq(2).text()),
-      unidadFiscalizable: cleanText(cells.eq(3).text()),
-      sector: cleanText(cells.eq(4).text()),
-      resolucion: cleanText(cells.eq(5).text()),
-      ...downloadData,
+      uuid,
+      recurso: parameters.recurso ?? "",
+      expediente: parameters.nroexp ?? "",
+      palabras: parameters.palabras ?? "",
+      pretensiones: parameters.pretensiones ?? "",
+      normaDI: parameters.normaDI ?? "",
+      tipoResolucion: parameters.tipoResolucion ?? "",
+      fechaResolucion: parameters.fechaResolucion ?? "",
+      sala: parameters.sala ?? "",
+      sumilla: parameters.sumilla ?? "",
+      pdfUrl:
+        `${BASE_URL}/jurisprudenciaweb/ServletDescarga?uuid=` +
+        encodeURIComponent(uuid),
     });
   });
 
   if (documents.length === 0) {
-    throw new Error(
-      `La respuesta contiene la tabla, pero no se encontraron filas. ` +
-        `Longitud del fragmento: ${html.length}`,
-    );
+    throw new Error("La búsqueda no contiene resoluciones");
   }
 
-  const paginatorText = cleanText($(".ui-paginator-current").first().text());
-
-  const paginatorMatch =
-    paginatorText.match(
-      /Pagina\s+(\d+)\s+de\s+(\d+)\s+\((\d+)\s+registros\)/i,
-    ) ??
-    paginatorText.match(/Página\s+(\d+)\s+de\s+(\d+)\s+\((\d+)\s+registros\)/i);
-
-  if (paginatorMatch) {
-    return {
-      documents,
-      currentPage: Number(paginatorMatch[1]),
-      totalPages: Number(paginatorMatch[2]),
-      totalRecords: Number(paginatorMatch[3]),
-    };
-  }
-
-  if (fallbackPagination) {
-    return {
-      documents,
-      ...fallbackPagination,
-    };
-  }
-
-  throw new Error(`No se pudo interpretar la paginación: ${paginatorText}`);
-}
-
-export function parsePartialResponse(
-  xmlBody: string,
-  fallbackPagination?: PaginationInfo,
-): SearchResult {
-  const xml = cheerio.load(xmlBody, { xmlMode: true });
-  const tableHtml =
-    xml('update[id="listarDetalleInfraccionRAAForm:pgLista"]').text() ||
-    xml('update[id="listarDetalleInfraccionRAAForm:dt"]').text();
-
-  const viewStateElement = xml("update")
-    .toArray()
-    .find((element) =>
-      (xml(element).attr("id") ?? "").includes("javax.faces.ViewState"),
-    );
-  const viewState = viewStateElement ? xml(viewStateElement).text().trim() : "";
-
-  if (!tableHtml) {
-    throw new Error("La respuesta JSF no contiene la tabla de resultados");
-  }
-
-  if (!viewState) {
-    throw new Error("La respuesta JSF no contiene un ViewState actualizado");
-  }
+  const totalAvailable = Number(totals[1]);
+  const totalRecords = Number(totals[2]);
 
   return {
-    ...parseTable(tableHtml, fallbackPagination),
-    viewState,
+    query,
+    documents,
+    totalAvailable,
+    totalRecords,
+    totalPages: Math.ceil(totalRecords / 10),
+    currentPage: 1,
+    viewState: extractViewState(html),
   };
 }

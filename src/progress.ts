@@ -11,7 +11,7 @@ import { DocumentRecord } from "./types";
 
 export interface DownloadedDocument {
   uuid: string;
-  resolucion: string;
+  expediente: string;
   filePath: string;
   downloadedAt: string;
 }
@@ -103,12 +103,12 @@ export function registerDownloadedDocument(
   absoluteFilePath: string,
 ): void {
   if (!document.uuid) {
-    throw new Error(`Documento sin UUID: ${document.resolucion}`);
+    throw new Error(`Documento sin UUID: ${document.expediente}`);
   }
 
   manifest[document.uuid] = {
     uuid: document.uuid,
-    resolucion: document.resolucion,
+    expediente: document.expediente,
     filePath: path.relative(process.cwd(), absoluteFilePath),
     downloadedAt: new Date().toISOString(),
   };
