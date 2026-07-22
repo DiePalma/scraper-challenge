@@ -174,7 +174,7 @@ export async function downloadPdf(
     fallbackName,
   );
 
-  const fileName = sanitizeFileName(serverFileName);
+  const fileName = `${document.uuid}-${sanitizeFileName(serverFileName)}`;
   const outputDirectory = path.resolve(process.cwd(), "data", "pdfs");
   const outputFile = path.join(outputDirectory, fileName);
 

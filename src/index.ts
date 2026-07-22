@@ -7,6 +7,13 @@ import {
   getErrorMessage,
   saveFailedDownloads,
 } from "./failures";
+import {
+  DownloadManifest,
+  isDocumentDownloaded,
+  loadDownloadManifest,
+  registerDownloadedDocument,
+  saveDownloadManifest,
+} from "./progress";
 import { fetchPage, searchAll } from "./search";
 import {
   initializeSession,
@@ -73,12 +80,27 @@ async function downloadPageDocuments(
   documents: DocumentRecord[],
   pageNumber: number,
   failures: FailedDownload[],
+  manifest: DownloadManifest,
 ): Promise<void> {
   for (const [position, document] of documents.entries()) {
     if (!document.uuid || !document.downloadAction) {
       console.log(
         `PDF ${position + 1}/${documents.length} de la página ` +
           `${pageNumber} omitido: archivo no disponible`,
+      );
+
+      continue;
+    }
+
+    const alreadyDownloaded = await isDocumentDownloaded(
+      manifest,
+      document,
+    );
+
+    if (alreadyDownloaded) {
+      console.log(
+        `PDF ${position + 1}/${documents.length} de la página ` +
+          `${pageNumber} omitido: ${document.resolucion}`,
       );
 
       continue;
@@ -97,6 +119,9 @@ async function downloadPageDocuments(
       );
 
       console.log(`  Guardado en: ${outputFile}`);
+
+      registerDownloadedDocument(manifest, document, outputFile);
+      await saveDownloadManifest(manifest);
     } catch (error: unknown) {
       const errorMessage = getErrorMessage(error);
 
@@ -127,6 +152,7 @@ async function main(): Promise<void> {
   const pageLimit = resolvePageLimit(firstPage.totalPages);
   const downloadEnabled = shouldDownloadPdfs();
   const failures: FailedDownload[] = [];
+  const downloadManifest = await loadDownloadManifest();
   const documents: DocumentRecord[] = [
     ...firstPage.documents,
   ];
@@ -153,6 +179,7 @@ async function main(): Promise<void> {
       firstPage.documents,
       1,
       failures,
+      downloadManifest,
     );
   }
 
@@ -189,6 +216,7 @@ async function main(): Promise<void> {
         page.documents,
         pageNumber,
         failures,
+        downloadManifest,
       );
     }
 
@@ -202,6 +230,9 @@ async function main(): Promise<void> {
   console.log(`Resultado guardado en: ${outputFile}`);
   console.log(`Descargas fallidas: ${failures.length}`);
   console.log(`Registro de fallos: ${failuresFile}`);
+  console.log(
+    `PDFs registrados: ${Object.keys(downloadManifest).length}`,
+  );
 }
 
 main().catch((error: unknown) => {
