@@ -1,11 +1,88 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import axios from "axios";
+import axios, { AxiosResponse } from "axios";
 
+import { withExponentialBackoff } from "./retry";
 import { SessionState, SITE_URL } from "./session";
 import { DocumentRecord } from "./types";
 
 const FORM_ID = "listarDetalleInfraccionRAAForm";
+
+export function parseRetryAfter(value: unknown): number | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const seconds = Number(value);
+
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return seconds * 1_000;
+  }
+
+  const retryDate = Date.parse(value);
+  return Number.isNaN(retryDate)
+    ? undefined
+    : Math.max(0, retryDate - Date.now());
+}
+
+export function isRetryableError(error: unknown): boolean {
+  if (!axios.isAxiosError(error)) {
+    return false;
+  }
+
+  if (!error.response) {
+    return true;
+  }
+
+  return [408, 429, 500, 502, 503, 504].includes(
+    error.response.status,
+  );
+}
+
+async function requestPdfWithRetry(
+  session: SessionState,
+  encodedBody: string,
+  maxAttempts = 5,
+): Promise<AxiosResponse<ArrayBuffer>> {
+  return withExponentialBackoff(
+    async (attempt) => {
+      console.log(`  Intento de descarga ${attempt}/${maxAttempts}`);
+
+      return axios.post<ArrayBuffer>(SITE_URL, encodedBody, {
+        headers: {
+          Accept:
+            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          "Content-Type": "application/x-www-form-urlencoded",
+          Cookie: session.cookie,
+          Referer: SITE_URL,
+          "User-Agent": "scraper-challenge/1.0",
+        },
+        responseType: "arraybuffer",
+        timeout: 60_000,
+      });
+    },
+    {
+      maxAttempts,
+      baseDelayMilliseconds: 1_000,
+      maximumDelayMilliseconds: 30_000,
+      shouldRetry: isRetryableError,
+      getRetryAfterMilliseconds: (error) =>
+        axios.isAxiosError(error)
+          ? parseRetryAfter(error.response?.headers["retry-after"])
+          : undefined,
+      onRetry: ({ error, waitingTime }) => {
+        const status = axios.isAxiosError(error)
+          ? error.response?.status ?? "sin respuesta"
+          : "desconocido";
+
+        console.warn(
+          `  Descarga fallida (${status}). ` +
+            `Nuevo intento en ${waitingTime} ms`,
+        );
+      },
+    },
+  );
+}
 
 
 function sanitizeFileName(fileName: string): string {
@@ -83,21 +160,9 @@ export async function downloadPdf(
     param_uuid: document.uuid,
   });
 
-  const response = await axios.post<ArrayBuffer>(
-    SITE_URL,
-    body,
-    {
-      headers: {
-        Accept:
-          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Content-Type": "application/x-www-form-urlencoded",
-        Cookie: session.cookie,
-        Referer: SITE_URL,
-        "User-Agent": "scraper-challenge/1.0",
-      },
-      responseType: "arraybuffer",
-      timeout: 60_000,
-    },
+  const response = await requestPdfWithRetry(
+    session,
+    body.toString(),
   );
 
   const pdfBuffer = Buffer.from(response.data);
